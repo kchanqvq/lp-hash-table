@@ -71,6 +71,10 @@ entries. The =index= indirection has two benefits:
 - =PROBE=, a nightmare for GC if we store boxed keys/values there, do not need to
   be scanned; =KV= is scanned and is GC-friendly
 
+Note: the above assume =*probe-bits*= is 32. On platform where =fixnum= is
+shorter this will be decreased automatically (like 32-bit
+platforms). You can also control this via the =:probe-bits= option.
+
 * Knobs
 
 There isn't one single fastest hash table, so the library provides a number of knobs:
@@ -78,6 +82,8 @@ There isn't one single fastest hash table, so the library provides a number of k
 - pass =:store-hash t= to speed up compaction if your hash function is expensive
   and your workload is delete-heavy; otherwise =:store-hash nil= to save space.
 - pass =:optimize (speed (safety 0))= to become maybe faster or/and heap-corrupted
+- =:probe-bits= defaults to =*probe-bits*=, which is a reasonable guess
+  (32-bit if possible, or shorter if =fixnum= is short).
 - The constructor =make-*= defined by the =define-hash-table= or =define-hash-set=
   macro takes option:
   - =:size= initial size
