@@ -45,7 +45,15 @@
                 (vref (v i) `(svref ,v (the fixnum (1+ (the fixnum (ash ,i 1))))))  ; entry I value (table only)
                 (next (s m) `(the u32 (logand (the fixnum (1+ ,s)) ,m)))  ; probe advance
                 (hashof (k) `(logand (,',hash-fn ,k) #xffffffff))
-                (lose () '(error "don't call internal constructor")))
+                (lose () '(error "don't call internal constructor"))
+                (check-cap (cap)
+                  `(if (<= ,cap ,,(ash 1 32))
+                       ,cap
+                       (error "capacity ~a too large" ,cap)))
+                (check-klim (klim)
+                  `(if (< ,klim ,,(1- (ash 1 32)))
+                       ,klim
+                       (error "kv size ~a too large" ,klim))))
 
        (defstruct (,name (:constructor ,%make) (:copier nil) (:predicate nil))
          (probe (lose) :type (simple-array u32 (*)))
@@ -63,9 +71,13 @@
        (declaim (inline ,mapf ,pfind))
 
        (defun ,make (&key (size 16) (load-factor 0.7) (kv-size 1.5))
-         (let* ((cap (%pow2-ceiling size))
+         (assert (< 0 load-factor 1) (load-factor)
+                 "load-factor must be in (0,1), got ~a" load-factor)
+         (assert (> kv-size 1) (kv-size)
+                 "kv-size must be > 1, got ~a" kv-size)
+         (let* ((cap (check-cap (%pow2-ceiling size)))
                 (lim (floor (* cap load-factor)))
-                (klim (ceiling (* cap load-factor kv-size))))  ; KV capacity (encoded in its length)
+                (klim (check-klim (ceiling (* cap load-factor kv-size)))))
            (declare (type u32 cap lim klim))
            (,%make :probe (make-array (* 2 cap) :element-type 'u32
                                                 :initial-element 0)
@@ -156,8 +168,8 @@ belongs.  H32 = 32-bit key hash.  Shared by GET/PUT/REM."
        (defun ,grow (table)
          (let* ((pr (,probe table)) (ok (,kv table))
                 (hwm (,hwm table)) (cap (1+ (,imask table)))
-                (ncap (* 2 cap)) (nimask (1- ncap)) (nlim (floor (* ncap (,lff table))))
-                (nklim (ceiling (* ncap (,lff table) (,kvsf table))))
+                (ncap (check-cap (* 2 cap))) (nimask (1- ncap)) (nlim (floor (* ncap (,lff table))))
+                (nklim (check-klim (ceiling (* ncap (,lff table) (,kvsf table)))))
                 (np (make-array (* 2 ncap) :element-type 'u32 :initial-element 0))
                 (nk (make-array (ksize nklim)))
                 ,@(when store-hash
