@@ -4,47 +4,30 @@
   (:export #:run-benchmarks))
 (in-package #:lp-hash-table/benchmark)
 
-;;;; Microbenchmarks vs native SBCL hash-tables.  Load the system and call
-;;;; (lp-hash-table/benchmark:run-benchmarks).
+;;;; Microbenchmarks vs native hash-tables: (lp-hash-table/benchmark:run-benchmarks).
+;;;; Keys come from a full-period LCG stream (LCG), not arrays or a 0,1,2,.. walk:
+;;;; INSERT stores N distinct keys, GET-HIT replays the seed, GET-MISS offsets by
+;;;; 2^31.  Probe keys are DYNAMIC-EXTENT so lookups don't allocate.
 ;;;;
-;;;; No key/index arrays and no linear key sequence are used anywhere.  Each
-;;;; variant passes a GENERATOR EXPRESSION over a pseudo-random number X, spliced
-;;;; inline; X comes from a full-period LCG stream (see LCG) -- never a 0,1,2,...
-;;;; walk.  Because the LCG is full period, its first N outputs are DISTINCT, so
-;;;; INSERT stores N distinct keys with no linear pattern and no backing array.
-;;;; GET-HIT replays the stream from the fixed seed (every probe hits); GET-MISS
-;;;; offsets X by 2^31 (always absent, the generator being injective in X).  The
-;;;; pure lookups declare the probe key DYNAMIC-EXTENT, so a constructed key
-;;;; (built with LIST/LIST*, not LOOP COLLECT) is stack-allocated -- probing
-;;;; stays allocation-free.  BENCH emits one op suite per variant via a MACROLET.
-
-;;; The multiplicative hashes and the LCG below keep every product under a
-;;; 61-bit fixnum AND wrap it in (THE FIXNUM ...), so they stay native on ECL
-;;; (61-bit fixnum) as well as SBCL (62-bit).  Two reasons a naive version goes
-;;; generic (boxed) on ECL: (1) a 30-bit operand * the ~31.3-bit constant reaches
-;;; 62 bits -- a fixnum on SBCL but a bignum on ECL -- so we mask operands to 29
-;;; bits (30 for the LCG's smaller multiplier) to keep the product <=60.x bits;
-;;; (2) even then, ECL does not propagate the LOGAND range bound through the
-;;; multiply, so it can't prove the product is a fixnum -- (THE FIXNUM ...) (true
-;;; thanks to the masking) forces the native machine multiply.  We also drop the
-;;; (LOGAND ... MOST-POSITIVE-FIXNUM) masks: once the product provably fits a
-;;; fixnum they are no-ops, and ECL compiles MOST-POSITIVE-FIXNUM as a runtime
-;;; special-variable lookup rather than a constant.
+;;;; The hashes/LCG mask operands (see FXHASH) so each product is a fixnum and
+;;;; wrap it in (THE (UNSIGNED-BYTE n) ..), which lets CCL/ECL inline the multiply
+;;;; -- they don't propagate the LOGAND range and otherwise call generic *.
 
 (declaim (inline fxhash))
 (defun fxhash (x)
   (declare (type fixnum x))
-  (the fixnum (* (logand x #x1fffffff) 2654435769)))     ; 29-bit operand => <=60.3-bit product
+  ;; THE to convince CCL to open-code
+  (the fixnum (* (the (unsigned-byte 28) (logand x #xfffffff)) 2654435769)))
 
 (declaim (inline list-hash))
 (defun list-hash (keys)
-  "Order-sensitive multiplicative hash of a short list of fixnums; each step's
-29-bit operand * 32-bit constant stays under a 61-bit fixnum."
+  "Order-sensitive multiplicative hash of a short list of fixnums (see FXHASH
+for the 28-bit masking)."
   (declare (type list keys))
   (let ((h 0))
     (declare (type fixnum h))
     (dolist (e keys h)
-      (setf h (the fixnum (* (logand (logxor h (the fixnum e)) #x1fffffff) 2654435769))))))
+      (setf h (the fixnum (* (the (unsigned-byte 28) (logand (logxor h (the fixnum e)) #xfffffff)) 2654435769))))))
 
 (declaim (inline lcg))
 (defun lcg (x)

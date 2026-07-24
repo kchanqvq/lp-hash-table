@@ -8,12 +8,11 @@
 
 (defun run-tests () (run! 'all))
 
-;; A sensible fixnum hash (multiplicative; well-distributed low+high bits), like
-;; the benchmark's -- SXHASH on fixnums is not what we use in practice.
 (declaim (inline fxhash))
 (defun fxhash (x)
   (declare (type fixnum x))
-  (logand (* (logand x #x3fffffff) 2654435769) most-positive-fixnum))
+  ;; THE to convince CCL to open-code
+  (the fixnum (* (the (unsigned-byte 28) (logand x #xfffffff)) 2654435769)))
 
 (define-hash-set   fixnum-set fxhash eq)
 (define-hash-table str-table (lambda (s) (sxhash (the string s))) equal)
