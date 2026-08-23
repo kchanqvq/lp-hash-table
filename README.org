@@ -15,7 +15,7 @@ This software is in Public Domain.
 * How fast
 Linux SBCL 2.6.3 with 24GB heap on Xeon E5-2640 v4 (25MB LLC). 4-element fixnum
 list keys (because that's why we write Lisp), =lp-hash-table= uses a custom hash
-function, comparing with stock =equal= hash table:
+function, is generally 1.4x-1.8x faster than stock =equal= hash table:
 
 [[./bench-list-table.png]]
 
