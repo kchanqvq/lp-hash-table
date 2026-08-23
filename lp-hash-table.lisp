@@ -47,7 +47,11 @@
        ;; CCL 1.13 can't open-code struct accessors if DEFSTRUCT and
        ;; callers sit in the same MACROLET
        (macrolet ((lose () '(error "don't call internal constructor")))
-         (defstruct (,name (:constructor ,%make) (:copier nil) (:predicate nil))
+         (defstruct (,name (:constructor ,%make)
+                           (:copier nil)
+                           (:print-object (lambda (object stream)
+                                            (print-unreadable-object (object stream :type t :identity t)
+                                              (format stream ":COUNT ~A" (,icount object))))))
            (probe (error "don't call internal constructor") :type (simple-array ,u32 (*)))
            (kv (error "don't call internal constructor") :type simple-vector)
            (imask 15 :type ,u32)
@@ -257,9 +261,9 @@ belongs.  H32 = 32-bit key hash.  Shared by GET/PUT/REM."
      &key store-hash (optimize '(speed)) (probe-bits *probe-bits*))
   "Define a hash table type NAME.
 
-Generates MAKE-NAME, NAME-GET/PUT/REM/CLEAR and MAP-NAME (preserves
-insertion order). Also generate %NAME-GROW/COMPACT/PROBE, use if you
-know what you are doing.
+Generates MAKE-NAME, NAME-P, NAME-GET/PUT/REM/CLEAR and MAP-NAME (preserves
+insertion order). Also generate %NAME-GROW/COMPACT/PROBE, use if you know what
+you are doing.
 
 HASH-FN and TEST-FN are unevaluated function designators. :STORE-HASH T keeps a
 parallel (unsigned-byte 32) hash array so COMPACT reuses stored hashes instead
@@ -272,9 +276,9 @@ workload. :OPTIMIZE specifies optimization declaration."
      &key store-hash (optimize '(speed)) (probe-bits *probe-bits*))
   "Define a hash set type NAME.
 
-Generates MAKE-NAME, NAME-GET/PUT/REM/CLEAR and MAP-NAME (preserves
-insertion order). Also generate %NAME-GROW/COMPACT/PROBE, use if you
-know what you are doing.
+Generates MAKE-NAME, NAME-P, NAME-GET/PUT/REM/CLEAR and MAP-NAME (preserves
+insertion order). Also generate %NAME-GROW/COMPACT/PROBE, use if you know what
+you are doing.
 
 HASH-FN and TEST-FN are unevaluated function designators. :STORE-HASH T keeps a
 parallel (unsigned-byte 32) hash array so COMPACT reuses stored hashes instead
