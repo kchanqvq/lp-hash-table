@@ -14,7 +14,7 @@
   ;; THE to convince CCL to open-code
   (the fixnum (* (the (unsigned-byte 28) (logand x #xfffffff)) 2654435769)))
 
-(define-hash-set   fixnum-set fxhash eq)
+(define-hash-set   fixnum-set fxhash eql)
 (define-hash-table str-table (lambda (s) (sxhash (the string s))) equal)
 (define-hash-table str-table-sh (lambda (s) (sxhash (the string s))) equal :store-hash t)
 
