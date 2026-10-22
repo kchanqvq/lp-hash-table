@@ -26,6 +26,8 @@
         (make    (symbolicate '#:make- name))
         (get*    (symbolicate name '#:-get))
         (put*    (symbolicate name '#:-put))
+        (ensure  (symbolicate name '#:-ensure))
+        (insert  (symbolicate '#:% name '#:-insert-at))
         (rem*    (symbolicate name '#:-rem))
         (clear   (symbolicate name '#:-clear))
         (mapf    (symbolicate '#:map- name))
@@ -64,7 +66,7 @@
                `((hashes (make-array 0 :element-type ',u32)
                          :type (simple-array ,u32 (*)))))))
 
-       (declaim (inline ,mapf ,pfind))
+       (declaim (inline ,mapf ,pfind ,insert))
        (macrolet ((eref (p s) `(aref ,p (the fixnum (1+ (the fixnum (ash ,s 1)))))) ; probe entry-index+1
                   (href (p s) `(aref ,p (the fixnum (ash ,s 1)))) ; probe hash32
                   (ksize (n) ,(if valuep '`(the fixnum (ash ,n 1)) 'n)) ; kv size for N entries
@@ -191,28 +193,48 @@ belongs.  H32 = 32-bit key hash.  Shared by GET/PUT/REM."
                    (values default nil)
                    (values ,(if valuep '(vref ks i) '(kref ks i)) t)))))
 
+         (defun ,insert (key ,@(when valuep '(value)) table slot h32)
+           "Append absent KEY at the empty SLOT returned by %PROBE, return the stored
+value (key for sets)."
+           (declare (optimize ,@optimize) (type ,name table) (type ,u32 slot h32))
+           (when (cond ((>= (,icount table) (,ilimit table)) (,grow table) t)
+                       ((>= (ksize (,hwm table)) (length (,kv table))) (,compact table) t)) ; KV full
+             (setq slot (,pfind (,probe table) (,kv table) (,imask table) h32 key))) ; SLOT stale
+           (let ((pr (,probe table)) (ks (,kv table)) (n (,hwm table)))
+             (declare (type (simple-array ,u32 (*)) pr) (type simple-vector ks)
+                      (type ,u32 n))
+             (setf (kref ks n) key
+                   ,@(when valuep '((vref ks n) value))
+                   ,@(when store-hash `((aref (,hashvec table) n) h32))
+                   (href pr slot) h32
+                   (eref pr slot) (the ,u32 (1+ n)))
+             (incf (,hwm table)) (incf (,icount table))
+             ,(if valuep 'value 'key)))
+
          (defun ,put* (key ,@(when valuep '(value)) table)
            (declare (optimize ,@optimize) (type ,name table))
-           (cond ((>= (,icount table) (,ilimit table)) (,grow table))
-                 ((>= (ksize (,hwm table)) (length (,kv table))) (,compact table))) ; KV full
-           (let* ((pr (,probe table)) (ks (,kv table)) (h32 (hashof key)))
-             (declare (type (simple-array ,u32 (*)) pr) (type simple-vector ks)
-                      (type ,u32 h32))
-             (multiple-value-bind (slot i) (,pfind pr ks (,imask table) h32 key)
+           (let ((ks (,kv table)) (h32 (hashof key)))
+             (declare (type simple-vector ks) (type ,u32 h32))
+             (multiple-value-bind (slot i) (,pfind (,probe table) ks (,imask table) h32 key)
                (declare (type ,u32 slot) (type fixnum i))
                (cond ((>= i 0)     ; present: update / return existing
                       ,@(when valuep '((setf (vref ks i) value)))
                       ,(if valuep 'value '(kref ks i)))
-                     (t        ; absent: append at HWM into empty SLOT
-                      (let ((n (,hwm table)))
-                        (declare (type ,u32 n))
-                        (setf (kref ks n) key
-                              ,@(when valuep '((vref ks n) value))
-                              ,@(when store-hash `((aref (,hashvec table) n) h32))
-                              (href pr slot) h32
-                              (eref pr slot) (the ,u32 (1+ n)))
-                        (incf (,hwm table)) (incf (,icount table))
-                        ,(if valuep 'value '(kref ks n))))))))
+                     (t (,insert key ,@(when valuep '(value)) table slot h32))))))
+
+         (defmacro ,ensure (key table &optional (default nil defaultp))
+           (with-gensyms (k tb ks h32 slot i)
+             `(let* ((,k ,key) (,tb ,table) (,ks (,',kv ,tb))
+                     (,h32 (logand (the fixnum (,',hash-fn ,k)) ,',(1- (ash 1 probe-bits)))))
+                (declare (type simple-vector ,ks) (type ,',u32 ,h32))
+                (multiple-value-bind (,slot ,i) (,',pfind (,',probe ,tb) ,ks (,',imask ,tb) ,h32 ,k)
+                  (declare (type ,',u32 ,slot) (type fixnum ,i))
+                  (if (minusp ,i)
+                      (values (,',insert
+                               ,@(if ,valuep (list k default) (list (if defaultp default k)))
+                               ,tb ,slot ,h32)
+                              nil)
+                      (values (svref ,ks ,(if ,valuep `(1+ (ash ,i 1)) i)) t))))))
 
          (defun ,rem* (key table)
            (declare (optimize ,@optimize) (type ,name table))
@@ -261,9 +283,9 @@ belongs.  H32 = 32-bit key hash.  Shared by GET/PUT/REM."
      &key store-hash (optimize '(speed)) (probe-bits *probe-bits*))
   "Define a hash table type NAME.
 
-Generates MAKE-NAME, NAME-P, NAME-GET/PUT/REM/CLEAR and MAP-NAME (preserves
-insertion order). Also generate %NAME-GROW/COMPACT/PROBE, use if you know what
-you are doing.
+Generates MAKE-NAME, NAME-P, NAME-GET/PUT/REM/CLEAR/ENSURE, MAP-NAME (preserves
+insertion order) and macro NAME-ENSURE. Also generate
+%NAME-GROW/COMPACT/PROBE/INSERT-AT, use if you know what you are doing.
 
 HASH-FN and TEST-FN are unevaluated function designators. :STORE-HASH T keeps a
 parallel (unsigned-byte 32) hash array so COMPACT reuses stored hashes instead
@@ -276,9 +298,9 @@ workload. :OPTIMIZE specifies optimization declaration."
      &key store-hash (optimize '(speed)) (probe-bits *probe-bits*))
   "Define a hash set type NAME.
 
-Generates MAKE-NAME, NAME-P, NAME-GET/PUT/REM/CLEAR and MAP-NAME (preserves
-insertion order). Also generate %NAME-GROW/COMPACT/PROBE, use if you know what
-you are doing.
+Generates MAKE-NAME, NAME-P, NAME-GET/PUT/REM/CLEAR/ENSURE, MAP-NAME (preserves
+insertion order) and macro NAME-ENSURE. Also generate
+%NAME-GROW/COMPACT/PROBE/INSERT-AT, use if you know what you are doing.
 
 HASH-FN and TEST-FN are unevaluated function designators. :STORE-HASH T keeps a
 parallel (unsigned-byte 32) hash array so COMPACT reuses stored hashes instead

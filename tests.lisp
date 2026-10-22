@@ -15,6 +15,7 @@
   (the fixnum (* (the (unsigned-byte 28) (logand x #xfffffff)) 2654435769)))
 
 (define-hash-set   fixnum-set fxhash eq)
+(define-hash-set   str-set (lambda (s) (sxhash (the string s))) equal)
 (define-hash-table str-table (lambda (s) (sxhash (the string s))) equal)
 (define-hash-table str-table-sh (lambda (s) (sxhash (the string s))) equal :store-hash t)
 
@@ -42,6 +43,45 @@
     (is (eq :none (str-table-get "b" h :none)) "default on miss")
     (is-true (str-table-rem "a" h))
     (is (= 0 (str-table-count h)))))
+
+;; ENSURE on a miss must still work right after it triggers GROW/COMPACT.
+(defmacro ensure-churn (ensure get rem tbl)
+  `(progn
+     (dotimes (i 50000) (,ensure (format nil "e~a" i) ,tbl i))   ; -> grow
+     (dotimes (i 25000) (,rem (format nil "e~a" i) ,tbl))
+     (loop for i from 50000 below 90000                         ; -> compact
+           do (,ensure (format nil "e~a" i) ,tbl i))
+     (is (loop for i from 25000 below 90000
+               always (eql i (,get (format nil "e~a" i) ,tbl))))
+     (is (loop for i from 25000 below 90000
+               always (nth-value 1 (,ensure (format nil "e~a" i) ,tbl -1))))))
+
+(test ensure-table
+  (let ((h (make-str-table)) (n 0))
+    (multiple-value-bind (v p) (str-table-ensure "a" h (incf n))
+      (is (eql 1 v)) (is-false p))
+    (multiple-value-bind (v p) (str-table-ensure "a" h (incf n))
+      (is (eql 1 v) "hit returns existing value") (is-true p))
+    (is (= 1 n) "DEFAULT evaluated only on miss")
+    (is (null (str-table-ensure "b" h)) "DEFAULT defaults to NIL")
+    (is-true (nth-value 1 (str-table-get "b" h)))
+    (is (= 2 (str-table-count h)))
+    (ensure-churn str-table-ensure str-table-get str-table-rem h))
+  (let ((h (make-str-table-sh)))
+    (ensure-churn str-table-sh-ensure str-table-sh-get str-table-sh-rem h)))
+
+(test ensure-set
+  (let* ((s (make-str-set)) (k1 (copy-seq "k")) (k2 (copy-seq "k")))
+    (multiple-value-bind (v p) (str-set-ensure "k" s k1)
+      (is (eq k1 v) "miss stores DEFAULT as the key") (is-false p))
+    (multiple-value-bind (v p) (str-set-ensure "k" s k2)
+      (is (eq k1 v) "hit keeps existing key") (is-true p))
+    (is (eq k1 (str-set-get "k" s)))
+    (multiple-value-bind (v p) (str-set-ensure k2 s)
+      (is (eq k1 v)) (is-true p))
+    (multiple-value-bind (v p) (str-set-ensure "j" s)
+      (is (equal "j" v) "DEFAULT defaults to KEY") (is-false p))
+    (is (= 2 (str-set-count s)))))
 
 (test intern-distinct-but-equal-keys
   (let ((h (make-str-table)))
